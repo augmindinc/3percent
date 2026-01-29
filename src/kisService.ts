@@ -101,7 +101,6 @@ export async function getOverseasBalance(account: string) {
     }
     return result;
 }
-<<<<<<< HEAD
 
 export async function getOverseasCash(account: string) {
     const token = await getAccessToken();
@@ -126,5 +125,3 @@ export async function getOverseasCash(account: string) {
     }
     return result;
 }
-=======
->>>>>>> origin/main

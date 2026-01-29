@@ -3,22 +3,14 @@ import { useState, useEffect } from 'react';
 import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
 import type { User } from 'firebase/auth';
 import { auth, googleProvider } from './firebase';
-<<<<<<< HEAD
 import { getDomesticBalance, getOverseasBalance, getOverseasCash } from './kisService';
-=======
-import { getDomesticBalance, getOverseasBalance } from './kisService';
->>>>>>> origin/main
 import './App.css';
 
 function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
-<<<<<<< HEAD
   const [balances, setBalances] = useState<any>({ overseas: null, overseasCash: null, domesticCash: null });
-=======
-  const [balances, setBalances] = useState<any>({ domestic: null, overseas: null });
->>>>>>> origin/main
   const [balanceLoading, setBalanceLoading] = useState(false);
 
   useEffect(() => {
@@ -43,11 +35,7 @@ function App() {
   const handleLogout = async () => {
     try {
       await signOut(auth);
-<<<<<<< HEAD
       setBalances({ overseas: null, overseasCash: null, domesticCash: null });
-=======
-      setBalances({ domestic: null, overseas: null });
->>>>>>> origin/main
     } catch (err) {
       console.error(err);
     }
@@ -56,7 +44,6 @@ function App() {
   const fetchBalances = async () => {
     setBalanceLoading(true);
     try {
-<<<<<<< HEAD
       const overseas = await getOverseasBalance(import.meta.env.VITE_KIS_OVERSEAS_ACCOUNT);
       const domesticCash = await getOverseasCash(import.meta.env.VITE_KIS_DOMESTIC_ACCOUNT);
       const overseasCash = await getOverseasCash(import.meta.env.VITE_KIS_OVERSEAS_ACCOUNT);
@@ -66,11 +53,6 @@ function App() {
       console.log('Overseas Cash Raw:', overseasCash);
 
       setBalances({ overseas, domesticCash, overseasCash });
-=======
-      const domestic = await getDomesticBalance(import.meta.env.VITE_KIS_DOMESTIC_ACCOUNT);
-      const overseas = await getOverseasBalance(import.meta.env.VITE_KIS_OVERSEAS_ACCOUNT);
-      setBalances({ domestic, overseas });
->>>>>>> origin/main
     } catch (err) {
       console.error('잔고 조회 실패:', err);
     } finally {
@@ -126,36 +108,6 @@ function App() {
           </div>
 
           <div className="account-grid">
-<<<<<<< HEAD
-=======
-            {/* 국내 계좌 */}
-            <div className="account-card">
-              <div className="account-type">국내 주식</div>
-              <div className="account-number">{import.meta.env.VITE_KIS_DOMESTIC_ACCOUNT}</div>
-              {balances.domestic ? (
-                <>
-                  <div className="balance-amount">
-                    {Number(balances.domestic.output2?.[0]?.tot_evlu_amt || 0).toLocaleString()}원
-                  </div>
-                  <div className="stock-list">
-                    {balances.domestic.output1 && balances.domestic.output1.length > 0 ? (
-                      balances.domestic.output1.map((stock: any, i: number) => (
-                        <div key={i} className="stock-item">
-                          <span className="stock-name">{stock.prdt_name}</span>
-                          <span className={`stock-profit ${Number(stock.evlu_pfls_amt || 0) >= 0 ? 'profit-plus' : 'profit-minus'}`}>
-                            {Number(stock.evlu_pfls_rt || 0).toFixed(2)}%
-                          </span>
-                        </div>
-                      ))
-                    ) : (
-                      <p className="subtitle" style={{ fontSize: '0.8rem' }}>보유 종목이 없습니다.</p>
-                    )}
-                  </div>
-                </>
-              ) : <p>데이터를 불러오는 중입니다...</p>}
-            </div>
-
->>>>>>> origin/main
             {/* 해외 계좌 */}
             <div className="account-card">
               <div className="account-type">해외 주식 (미국)</div>
@@ -163,7 +115,6 @@ function App() {
               {balances.overseas ? (
                 <>
                   <div className="balance-amount">
-<<<<<<< HEAD
                     ${(
                       Number(balances.overseas.output2?.tot_evlu_amt || 0) +
                       Number(balances.overseasCash?.output2?.[0]?.frcr_buy_psbl_amt || balances.overseasCash?.output2?.[0]?.frcr_dncl_amt_2 || 0)
@@ -173,9 +124,6 @@ function App() {
                     주식 평가: ${Number(balances.overseas.output2?.tot_evlu_amt || 0).toLocaleString()} <br />
                     원화 예수금: {Number(balances.overseasCash?.output3?.tot_dncl_amt || 0).toLocaleString()}원 <br />
                     외화 예수금: ${Number(balances.overseasCash?.output2?.[0]?.frcr_buy_psbl_amt || balances.overseasCash?.output2?.[0]?.frcr_dncl_amt_2 || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-=======
-                    ${Number(balances.overseas.output2?.tot_evlu_amt || balances.overseas.output2?.evlu_amt_smtl || 0).toLocaleString()}
->>>>>>> origin/main
                   </div>
                   <div className="stock-list">
                     {balances.overseas.output1 && balances.overseas.output1.length > 0 ? (
