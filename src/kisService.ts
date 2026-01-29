@@ -11,7 +11,9 @@ interface TokenResponse {
 // 환경 변수 처리 (따옴표 제거 및 공백 제거)
 const APP_KEY = import.meta.env.VITE_KIS_APP_KEY?.replace(/['"]/g, '').trim();
 const APP_SECRET = import.meta.env.VITE_KIS_APP_SECRET?.replace(/['"]/g, '').trim();
-const BASE_URL = ''; // Vite의 proxy 설정을 사용하기 위해 빈 값으로 설정합니다.
+const BASE_URL = window.location.hostname === 'localhost'
+    ? ''
+    : 'https://asia-northeast3-autotradeai1.cloudfunctions.net/apiProxy';
 
 export async function getAccessToken(): Promise<string> {
     const cachedToken = localStorage.getItem('kis_access_token');

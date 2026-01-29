@@ -32,11 +32,17 @@
         "rewrites": [
             {
                 "source": "/uapi/**",
-                "function": "apiProxy"
+                "function": {
+                    "functionId": "apiProxy",
+                    "region": "asia-northeast3"
+                }
             },
             {
                 "source": "/oauth2/**",
-                "function": "apiProxy"
+                "function": {
+                    "functionId": "apiProxy",
+                    "region": "asia-northeast3"
+                }
             },
             {
                 "source": "**",
