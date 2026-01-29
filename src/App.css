@@ -1,0 +1,6 @@
+/* App-specific styles can go here if needed */
+.success-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
