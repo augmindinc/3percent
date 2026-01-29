@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
 import type { User } from 'firebase/auth';
 import { auth, googleProvider } from './firebase';
-import { getDomesticBalance, getOverseasBalance, getOverseasCash } from './kisService';
+import { getDomesticBalance, getOverseasBalance, getOverseasCash, getOverseasVolumeRanking, getOverseasMinuteChart } from './kisService';
 import './App.css';
 
 function App() {
@@ -12,6 +12,11 @@ function App() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [balances, setBalances] = useState<any>({ overseas: null, overseasCash: null, domesticCash: null });
   const [balanceLoading, setBalanceLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'scanner'>('dashboard');
+
+  // Scanner state
+  const [scannedStocks, setScannedStocks] = useState<any[]>([]);
+  const [scanLoading, setScanLoading] = useState(false);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -47,11 +52,6 @@ function App() {
       const overseas = await getOverseasBalance(import.meta.env.VITE_KIS_OVERSEAS_ACCOUNT);
       const domesticCash = await getOverseasCash(import.meta.env.VITE_KIS_DOMESTIC_ACCOUNT);
       const overseasCash = await getOverseasCash(import.meta.env.VITE_KIS_OVERSEAS_ACCOUNT);
-
-      console.log('Overseas Data:', overseas);
-      console.log('Domestic Cash Raw:', domesticCash);
-      console.log('Overseas Cash Raw:', overseasCash);
-
       setBalances({ overseas, domesticCash, overseasCash });
     } catch (err) {
       console.error('잔고 조회 실패:', err);
@@ -60,19 +60,75 @@ function App() {
     }
   };
 
+  const runScanner = async () => {
+    setScanLoading(true);
+    try {
+      const rankingData = await getOverseasVolumeRanking('NAS'); // Nasdaq first
+      const topStocks = rankingData.output.slice(0, 15); // Top 15 for analysis
+
+      const analyzed = await Promise.all(topStocks.map(async (stock: any) => {
+        try {
+          // Fetch minute chart for deeper analysis
+          const chartData = await getOverseasMinuteChart('NAS', stock.symb);
+          const history = chartData.output2 || [];
+
+          if (history.length < 10) return null;
+
+          // 1. Volume check (In ranking already)
+          const volScore = Number(stock.vol) > Number(stock.avrg_vol) ? 1 : 0.5;
+
+          // 2. Upward Flow (Low -> Re-rally -> New High)
+          // Simplified: last 5 candles trend
+          const prices = history.slice(0, 10).map((h: any) => Number(h.last));
+          const isUpward = prices[0] > prices[4] && prices[0] >= Math.max(...prices);
+
+          // 3. Belt-hold (상승 샅바)
+          // In minute candle: Open == Low and Close at High
+          const latest = history[0];
+          const isBeltHold = Number(latest.open) === Number(latest.low) && Number(latest.last) >= Number(latest.high) * 0.998;
+
+          return {
+            symbol: stock.symb,
+            name: stock.name,
+            price: stock.last,
+            rate: stock.rate,
+            vol: stock.vol,
+            criteria: {
+              volume: true, // Top ranking ensures this
+              upward: isUpward,
+              beltHold: isBeltHold
+            },
+            score: (volScore + (isUpward ? 1.5 : 0) + (isBeltHold ? 2 : 0))
+          };
+        } catch (e) {
+          return null;
+        }
+      }));
+
+      setScannedStocks(analyzed.filter(s => s !== null).sort((a, b) => b.score - a.score));
+    } catch (err) {
+      console.error('스캔 실패:', err);
+    } finally {
+      setScanLoading(false);
+    }
+  };
+
   useEffect(() => {
-    if (user) {
+    if (user && activeTab === 'dashboard') {
       fetchBalances();
     }
-  }, [user]);
+    if (user && activeTab === 'scanner' && scannedStocks.length === 0) {
+      runScanner();
+    }
+  }, [user, activeTab]);
 
   if (loading) {
     return <div className="auth-container"><div className="loading">로딩 중...</div></div>;
   }
 
-  return (
-    <div className="auth-container">
-      {!user ? (
+  if (!user) {
+    return (
+      <div className="auth-container">
         <div className="auth-card">
           <div className="logo-area">
             <div className="logo-icon">
@@ -83,68 +139,156 @@ function App() {
             <h1>3Percent</h1>
             <p className="subtitle">투자 자산 관리의 시작</p>
           </div>
-
           <button className="google-btn" onClick={handleGoogleLogin}>
             <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" className="google-icon" />
             Google로 로그인
           </button>
-
           {authError && <p style={{ color: '#ef4444', marginTop: '1rem', fontSize: '0.875rem' }}>{authError}</p>}
         </div>
-      ) : (
-        <div className="dashboard">
-          <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
-            <div>
-              <h1 style={{ margin: 0, textAlign: 'left' }}>Dashboard</h1>
-              <p className="subtitle" style={{ margin: 0 }}>안녕하세요, {user.displayName}님</p>
-            </div>
-            <button className="refresh-btn" onClick={handleLogout} style={{ background: 'transparent', border: 'none', color: '#94a3b8' }}>로그아웃</button>
-          </header>
+      </div>
+    );
+  }
 
-          <div style={{ marginBottom: '2rem', textAlign: 'left' }}>
-            <button className={`refresh-btn ${balanceLoading ? 'loading' : ''}`} onClick={fetchBalances} disabled={balanceLoading}>
-              {balanceLoading ? '조회 중...' : '자산 새로고침'}
-            </button>
+  return (
+    <div className="layout-container">
+      <aside className="sidebar">
+        <div className="logo-area" style={{ textAlign: 'center', marginBottom: '1rem' }}>
+          <div className="logo-icon" style={{ width: '40px', height: '40px' }}>
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" style={{ width: '20px' }}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
           </div>
-
-          <div className="account-grid">
-            {/* 해외 계좌 */}
-            <div className="account-card">
-              <div className="account-type">해외 주식 (미국)</div>
-              <div className="account-number">{import.meta.env.VITE_KIS_OVERSEAS_ACCOUNT}</div>
-              {balances.overseas ? (
-                <>
-                  <div className="balance-amount">
-                    ${(
-                      Number(balances.overseas.output2?.tot_evlu_amt || 0) +
-                      Number(balances.overseasCash?.output2?.[0]?.frcr_buy_psbl_amt || balances.overseasCash?.output2?.[0]?.frcr_dncl_amt_2 || 0)
-                    ).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </div>
-                  <div style={{ fontSize: '0.8rem', color: '#94a3b8', marginBottom: '1rem' }}>
-                    주식 평가: ${Number(balances.overseas.output2?.tot_evlu_amt || 0).toLocaleString()} <br />
-                    원화 예수금: {Number(balances.overseasCash?.output3?.tot_dncl_amt || 0).toLocaleString()}원 <br />
-                    외화 예수금: ${Number(balances.overseasCash?.output2?.[0]?.frcr_buy_psbl_amt || balances.overseasCash?.output2?.[0]?.frcr_dncl_amt_2 || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                  </div>
-                  <div className="stock-list">
-                    {balances.overseas.output1 && balances.overseas.output1.length > 0 ? (
-                      balances.overseas.output1.map((stock: any, i: number) => (
-                        <div key={i} className="stock-item">
-                          <span className="stock-name">{stock.ovrs_item_name}</span>
-                          <span className={`stock-profit ${Number(stock.evlu_pfls_amt || 0) >= 0 ? 'profit-plus' : 'profit-minus'}`}>
-                            {Number(stock.evlu_pfls_rt || 0).toFixed(2)}%
-                          </span>
-                        </div>
-                      ))
-                    ) : (
-                      <p className="subtitle" style={{ fontSize: '0.8rem' }}>보유 종목이 없습니다.</p>
-                    )}
-                  </div>
-                </>
-              ) : <p>데이터를 불러오는 중입니다...</p>}
-            </div>
-          </div>
+          <h2 style={{ fontSize: '1.2rem', margin: '0.5rem 0' }}>3Percent</h2>
         </div>
-      )}
+
+        <nav className="nav-menu">
+          <button className={`nav-item ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>
+            <svg className="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>
+            대시보드
+          </button>
+          <button className={`nav-item ${activeTab === 'scanner' ? 'active' : ''}`} onClick={() => setActiveTab('scanner')}>
+            <svg className="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+            강력종목 발굴
+          </button>
+        </nav>
+
+        <div style={{ marginTop: 'auto' }}>
+          <button className="nav-item" onClick={handleLogout} style={{ color: '#ef4444' }}>
+            로그아웃
+          </button>
+        </div>
+      </aside>
+
+      <main className="main-content">
+        {activeTab === 'dashboard' ? (
+          <div className="dashboard-view">
+            <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
+              <div>
+                <h1 style={{ margin: 0, textAlign: 'left' }}>Dashboard</h1>
+                <p className="subtitle" style={{ margin: 0 }}>안녕하세요, {user.displayName}님</p>
+              </div>
+              <button className={`refresh-btn ${balanceLoading ? 'loading' : ''}`} onClick={fetchBalances} disabled={balanceLoading}>
+                {balanceLoading ? '조회 중...' : '자산 새로고침'}
+              </button>
+            </header>
+
+            <div className="account-grid">
+              <div className="account-card">
+                <div className="account-type">해외 주식 (미국)</div>
+                <div className="account-number">{import.meta.env.VITE_KIS_OVERSEAS_ACCOUNT}</div>
+                {balances.overseas ? (
+                  <>
+                    <div className="balance-amount">
+                      ${(
+                        Number(balances.overseas.output2?.tot_evlu_amt || 0) +
+                        Number(balances.overseasCash?.output2?.[0]?.frcr_buy_psbl_amt || balances.overseasCash?.output2?.[0]?.frcr_dncl_amt_2 || 0)
+                      ).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </div>
+                    <div style={{ fontSize: '0.8rem', color: '#94a3b8', marginBottom: '1rem' }}>
+                      주식 평가: ${Number(balances.overseas.output2?.tot_evlu_amt || 0).toLocaleString()} <br />
+                      원화 예수금: {Number(balances.overseasCash?.output3?.tot_dncl_amt || 0).toLocaleString()}원 <br />
+                      외화 예수금: ${Number(balances.overseasCash?.output2?.[0]?.frcr_buy_psbl_amt || balances.overseasCash?.output2?.[0]?.frcr_dncl_amt_2 || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </div>
+                    <div className="stock-list">
+                      {balances.overseas.output1 && balances.overseas.output1.length > 0 ? (
+                        balances.overseas.output1.map((stock: any, i: number) => (
+                          <div key={i} className="stock-item">
+                            <span className="stock-name">{stock.ovrs_item_name}</span>
+                            <span className={`stock-profit ${Number(stock.evlu_pfls_amt || 0) >= 0 ? 'profit-plus' : 'profit-minus'}`}>
+                              {Number(stock.evlu_pfls_rt || 0).toFixed(2)}%
+                            </span>
+                          </div>
+                        ))
+                      ) : (
+                        <p className="subtitle" style={{ fontSize: '0.8rem' }}>보유 종목이 없습니다.</p>
+                      )}
+                    </div>
+                  </>
+                ) : <div className="loading">데이터를 불러오는 중...</div>}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="scanner-view">
+            <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
+              <div>
+                <h1 style={{ margin: 0, textAlign: 'left' }}>Market Scanner</h1>
+                <p className="subtitle" style={{ margin: 0 }}>실시간 거래량 및 기술적 지표 기반 강력 종목 발굴</p>
+              </div>
+              <button className={`refresh-btn ${scanLoading ? 'loading' : ''}`} onClick={runScanner} disabled={scanLoading}>
+                {scanLoading ? '스캔 중...' : '새로 고침'}
+              </button>
+            </header>
+
+            {scanLoading && (
+              <div className="scan-progress">
+                <div className="scan-bar" style={{ width: '60%' }}></div>
+              </div>
+            )}
+
+            <div className="scanner-grid">
+              {scannedStocks.map((stock, i) => (
+                <div key={i} className="stock-card">
+                  {stock.score >= 3 && <div className="strong-badge" style={{ position: 'absolute', top: '1.25rem', right: '1.25rem' }}>HOT</div>}
+                  <div className="account-type">{stock.symbol}</div>
+                  <h3 style={{ margin: '0.25rem 0 1rem' }}>{stock.name}</h3>
+
+                  <div className="stock-info">
+                    <div className="stock-price">${Number(stock.price).toLocaleString()}</div>
+                    <div className={`stock-profit ${Number(stock.rate) >= 0 ? 'profit-plus' : 'profit-minus'}`}>
+                      {Number(stock.rate) > 0 ? '+' : ''}{stock.rate}%
+                    </div>
+                  </div>
+
+                  <div className="criteria-list">
+                    <div className="criteria-item">
+                      <div className={`criteria-dot ${stock.criteria.volume ? 'active' : ''}`}></div>
+                      거래량 상위 (관심/자본 유입)
+                    </div>
+                    <div className="criteria-item">
+                      <div className={`criteria-dot ${stock.criteria.upward ? 'active' : ''}`}></div>
+                      우상향 추세 (눌림 후 고점 갱신)
+                    </div>
+                    <div className="criteria-item">
+                      <div className={`criteria-dot ${stock.criteria.beltHold ? 'active' : ''}`}></div>
+                      상승 샅바 (강력한 매수 버티기)
+                    </div>
+                  </div>
+
+                  <div className="stock-vol" style={{ marginTop: '1.5rem', textAlign: 'right' }}>
+                    오늘 거래량: {Number(stock.vol).toLocaleString()}
+                  </div>
+                </div>
+              ))}
+              {scannedStocks.length === 0 && !scanLoading && (
+                <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '4rem', color: '#64748b' }}>
+                  현재 기준에 부합하는 종목을 찾는 중입니다...
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </main>
     </div>
   );
 }
