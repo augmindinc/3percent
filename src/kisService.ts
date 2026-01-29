@@ -165,13 +165,17 @@ export async function getOverseasVolumeRanking(excd: string = 'NAS') {
 
 export async function getOverseasMinuteChart(excd: string, symbol: string) {
     const token = await getAccessToken();
-    // HHDFS76410000: 해외주식 분봉조회
+    // HHDFS76950200: 해외주식 분봉조회 (오피셜 오프라인 문서 규격)
     const params = new URLSearchParams({
         AUTH: '',
-        EXCD: excd,
+        EXCD: excd === 'NASD' ? 'NAS' : excd, // 분봉조회는 NAS 사용
         SYMB: symbol,
-        TM_GUBW: '0',
-        TR_CONT: ''
+        NMIN: '1',      // 1분봉
+        PINC: '0',      // 당일만
+        NEXT: '',
+        NREC: '120',    // 120개
+        FILL: '',
+        KEYB: ''
     });
 
     const response = await fetch(`${BASE_URL}/uapi/overseas-price/v1/quotations/inquire-time-itemchartprice?${params.toString()}`, {
@@ -180,7 +184,7 @@ export async function getOverseasMinuteChart(excd: string, symbol: string) {
             'authorization': `Bearer ${token}`,
             'appkey': APP_KEY,
             'appsecret': APP_SECRET,
-            'tr_id': 'HHDFS76410000',
+            'tr_id': 'HHDFS76950200',
             'custtype': 'P',
             'Accept': 'text/plain'
         }

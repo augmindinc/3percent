@@ -100,46 +100,47 @@ function App() {
 
           const vol = Number(stock.tvol || stock.vol || 0);
 
-          // --- [강화된 분석 로직: 30분 트렌드 및 5분간의 패턴 추적] ---
+          // --- [강화된 분석 로직: 백엔드와 동기화된 30분 트렌드 및 패턴 추적] ---
           const prices30 = history.slice(0, 30).map((h: any) => Number(h.last));
           const current = prices30[0];
           const high30 = Math.max(...prices30);
           const low30 = Math.min(...prices30);
+          // 15~30분 평균 (중간값)
+          const midAvg = (prices30[14] + prices30[15] + prices30[16]) / 3;
 
-          // 1. 우상향 추세 (고점 부근 횡보 혹은 돌파)
-          const atHigh = current >= high30 * 0.997;
-          const recovered = current > low30 * 1.0015;
-          const trendOk = current > (prices30[14] + prices30[15] + prices30[16]) / 3;
-          const isUpward = atHigh && recovered && trendOk;
+          // 1. 우상향 추세 (백엔드 기준 0.995)
+          const isUpward = (current >= high30 * 0.995) &&
+            (current > low30 * 1.002) &&
+            (current > midAvg);
 
-          // 2. 상승 샅바 (Belt-hold) - 최근 5분 이내에 발생했는지 확인
-          const recent5 = history.slice(0, 5);
-          const isBeltHoldInLast5 = recent5.some((candle: any) => {
-            const c_open = Number(candle.open);
-            const c_low = Number(candle.low);
-            const c_high = Number(candle.high);
-            const c_last = Number(candle.last);
+          // 2. 상승 샅바 (Belt-hold) - 최근 3분 이내 발생 여부 (백엔드 로직 적용)
+          const recent3 = history.slice(0, 3);
+          const isBeltHold = recent3.some((c: any) => {
+            const o = Number(c.open);
+            const l = Number(c.last);
+            const h = Number(c.high);
+            const lw = Number(c.low);
+            const bodySize = l - o;
+            const totalSize = h - lw || 0.0001;
 
-            const isPos = c_last > c_open;
-            const tinyTail = c_open <= c_low * 1.0015;
-            const fullBody = c_last >= c_high * 0.9985;
-            const sizeOk = (c_last - c_open) / c_open >= 0.0008;
-
-            return isPos && tinyTail && fullBody && sizeOk;
+            return (l > o) && // 양봉
+              (o <= lw + (totalSize * 0.15)) && // 아래꼬리 매우 작음
+              (l >= h - (totalSize * 0.15)) && // 위꼬리 매우 작음
+              (bodySize > totalSize * 0.7); // 몸통이 70% 이상
           });
 
           const analyzedResult = {
             symbol,
             name,
-            price: Number(stock.last || 0),
+            price: current,
             rate: stock.rate || '0',
             vol,
             criteria: {
               volume: true,
               upward: isUpward,
-              beltHold: isBeltHoldInLast5
+              beltHold: isBeltHold
             },
-            score: (1 + (isUpward ? 1.5 : 0) + (isBeltHoldInLast5 ? 2 : 0))
+            score: (1 + (isUpward ? 1.5 : 0) + (isBeltHold ? 2 : 0))
           };
 
           tempAnalyzed.push(analyzedResult);
