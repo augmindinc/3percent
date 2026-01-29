@@ -128,31 +128,51 @@ export async function getOverseasCash(account: string) {
 
 export async function getOverseasVolumeRanking(excd: string = 'NAS') {
     const token = await getAccessToken();
-    // HHDFS76200200: 해외주식 거래량순위
-    const response = await fetch(`${BASE_URL}/uapi/overseas-stock/v1/quotations/volume-rank?AUTH=&EXCD=${excd}&GUBN=0&QTY=&VOL=&PRC=&TR_CONT=`, {
+    // HHDFS76310010: 해외주식 거래량순위 (정확한 엔드포인트와 TR_ID 반영)
+    const params = new URLSearchParams({
+        AUTH: '',
+        EXCD: excd,
+        GUBN: '0',
+        QTY: '',
+        VOL: '',
+        PRC: '',
+        TR_CONT: ''
+    });
+
+    const response = await fetch(`${BASE_URL}/uapi/overseas-stock/v1/ranking/trade-vol?${params.toString()}`, {
         headers: {
             'Content-Type': 'application/json; charset=utf-8',
             'authorization': `Bearer ${token}`,
             'appkey': APP_KEY,
             'appsecret': APP_SECRET,
-            'tr_id': 'HHDFS76200200',
+            'tr_id': 'HHDFS76310010',
             'custtype': 'P',
             'Accept': 'text/plain'
         }
     });
 
-    const result = await response.json();
-    if (!response.ok || (result.rt_cd && result.rt_cd !== '0')) {
-        console.error('Volume Rank Error:', result);
-        throw new Error(result.msg1 || '해외 거래량 순위 조회 실패');
+    if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Volume Rank HTTP Error:', response.status, errorText);
+        throw new Error(`해외 거래량 순위 조회 실패 (HTTP ${response.status})`);
     }
+
+    const result = await response.json();
     return result;
 }
 
 export async function getOverseasMinuteChart(excd: string, symbol: string) {
     const token = await getAccessToken();
     // HHDFS76410000: 해외주식 분봉조회
-    const response = await fetch(`${BASE_URL}/uapi/overseas-stock/v1/quotations/inquire-time-itemchartprice?AUTH=&EXCD=${excd}&SYMB=${symbol}&TM_GUBW=0&TR_CONT=`, {
+    const params = new URLSearchParams({
+        AUTH: '',
+        EXCD: excd,
+        SYMB: symbol,
+        TM_GUBW: '0',
+        TR_CONT: ''
+    });
+
+    const response = await fetch(`${BASE_URL}/uapi/overseas-price/v1/quotations/inquire-time-itemchartprice?${params.toString()}`, {
         headers: {
             'Content-Type': 'application/json; charset=utf-8',
             'authorization': `Bearer ${token}`,
@@ -164,10 +184,12 @@ export async function getOverseasMinuteChart(excd: string, symbol: string) {
         }
     });
 
-    const result = await response.json();
-    if (!response.ok || (result.rt_cd && result.rt_cd !== '0')) {
-        console.error('Price Chart Error:', result);
-        throw new Error(result.msg1 || '해외 분봉 조회 실패');
+    if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Minute Chart HTTP Error:', response.status, errorText);
+        throw new Error(`해외 분봉 조회 실패 (HTTP ${response.status})`);
     }
+
+    const result = await response.json();
     return result;
 }

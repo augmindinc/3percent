@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
 import type { User } from 'firebase/auth';
 import { auth, googleProvider } from './firebase';
-import { getDomesticBalance, getOverseasBalance, getOverseasCash, getOverseasVolumeRanking, getOverseasMinuteChart } from './kisService';
+import { getOverseasBalance, getOverseasCash, getOverseasVolumeRanking, getOverseasMinuteChart } from './kisService';
 import './App.css';
 
 function App() {
@@ -17,6 +17,8 @@ function App() {
   // Scanner state
   const [scannedStocks, setScannedStocks] = useState<any[]>([]);
   const [scanLoading, setScanLoading] = useState(false);
+  const [scanStatus, setScanStatus] = useState('');
+  const [scanProgress, setScanProgress] = useState(0);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -61,64 +63,118 @@ function App() {
   };
 
   const runScanner = async () => {
-    setScanLoading(true);
-    try {
-      const rankingData = await getOverseasVolumeRanking('NAS'); // Nasdaq first
-      const topStocks = rankingData.output.slice(0, 15); // Top 15 for analysis
+    if (scanLoading) return;
 
-      const analyzed = await Promise.all(topStocks.map(async (stock: any) => {
+    setScanLoading(true);
+    setScanProgress(0);
+    setScanStatus('시장 주도주 랭킹 데이터를 가져오는 중...');
+
+    try {
+      const rankingData = await getOverseasVolumeRanking('NAS');
+      const topStocks = rankingData.output2 || [];
+      const targetCount = Math.min(topStocks.length, 20);
+
+      if (topStocks.length === 0) {
+        setScanStatus('선별된 주도주 데이터가 없습니다.');
+        setScanLoading(false);
+        return;
+      }
+
+      setScannedStocks([]);
+      const tempAnalyzed: any[] = [];
+
+      for (let i = 0; i < targetCount; i++) {
+        const stock = topStocks[i];
+        const symbol = stock.symb || '';
+        const name = stock.name || '';
+        if (!symbol) continue;
+
+        setScanStatus(`[${i + 1}/${targetCount}] ${name} 분석 중...`);
+        setScanProgress(((i + 1) / targetCount) * 100);
+
         try {
-          // Fetch minute chart for deeper analysis
-          const chartData = await getOverseasMinuteChart('NAS', stock.symb);
+          const chartData = await getOverseasMinuteChart('NAS', symbol);
           const history = chartData.output2 || [];
 
-          if (history.length < 10) return null;
+          if (history.length < 30) continue; // 30분치 데이터 필수
 
-          // 1. Volume check (In ranking already)
-          const volScore = Number(stock.vol) > Number(stock.avrg_vol) ? 1 : 0.5;
+          const vol = Number(stock.tvol || stock.vol || 0);
 
-          // 2. Upward Flow (Low -> Re-rally -> New High)
-          // Simplified: last 5 candles trend
-          const prices = history.slice(0, 10).map((h: any) => Number(h.last));
-          const isUpward = prices[0] > prices[4] && prices[0] >= Math.max(...prices);
+          // --- [강화된 분석 로직: 30분 트렌드 및 5분간의 패턴 추적] ---
+          const prices30 = history.slice(0, 30).map((h: any) => Number(h.last));
+          const current = prices30[0];
+          const high30 = Math.max(...prices30);
+          const low30 = Math.min(...prices30);
 
-          // 3. Belt-hold (상승 샅바)
-          // In minute candle: Open == Low and Close at High
-          const latest = history[0];
-          const isBeltHold = Number(latest.open) === Number(latest.low) && Number(latest.last) >= Number(latest.high) * 0.998;
+          // 1. 우상향 추세 (고점 부근 횡보 혹은 돌파)
+          const atHigh = current >= high30 * 0.997;
+          const recovered = current > low30 * 1.0015;
+          const trendOk = current > (prices30[14] + prices30[15] + prices30[16]) / 3;
+          const isUpward = atHigh && recovered && trendOk;
 
-          return {
-            symbol: stock.symb,
-            name: stock.name,
-            price: stock.last,
-            rate: stock.rate,
-            vol: stock.vol,
+          // 2. 상승 샅바 (Belt-hold) - 최근 5분 이내에 발생했는지 확인
+          const recent5 = history.slice(0, 5);
+          const isBeltHoldInLast5 = recent5.some((candle: any) => {
+            const c_open = Number(candle.open);
+            const c_low = Number(candle.low);
+            const c_high = Number(candle.high);
+            const c_last = Number(candle.last);
+
+            const isPos = c_last > c_open;
+            const tinyTail = c_open <= c_low * 1.0015;
+            const fullBody = c_last >= c_high * 0.9985;
+            const sizeOk = (c_last - c_open) / c_open >= 0.0008;
+
+            return isPos && tinyTail && fullBody && sizeOk;
+          });
+
+          const analyzedResult = {
+            symbol,
+            name,
+            price: Number(stock.last || 0),
+            rate: stock.rate || '0',
+            vol,
             criteria: {
-              volume: true, // Top ranking ensures this
+              volume: true,
               upward: isUpward,
-              beltHold: isBeltHold
+              beltHold: isBeltHoldInLast5
             },
-            score: (volScore + (isUpward ? 1.5 : 0) + (isBeltHold ? 2 : 0))
+            score: (1 + (isUpward ? 1.5 : 0) + (isBeltHoldInLast5 ? 2 : 0))
           };
-        } catch (e) {
-          return null;
-        }
-      }));
 
-      setScannedStocks(analyzed.filter(s => s !== null).sort((a, b) => b.score - a.score));
+          tempAnalyzed.push(analyzedResult);
+          setScannedStocks([...tempAnalyzed].sort((a, b) => b.score - a.score));
+
+        } catch (e) {
+          console.error(`Analysis failed for ${symbol}:`, e);
+        }
+      }
+
+      setScanStatus('실시간 분석 완료 (1분 후 자동 갱신)');
     } catch (err) {
-      console.error('스캔 실패:', err);
+      console.error('스캔 작업 중 오류:', err);
+      setScanStatus('데이터를 가져오는 중 오류가 발생했습니다.');
     } finally {
       setScanLoading(false);
     }
   };
 
   useEffect(() => {
+    let interval: any;
+    if (user && activeTab === 'scanner') {
+      runScanner();
+      interval = setInterval(() => {
+        runScanner();
+      }, 60000);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [user, activeTab]);
+
+  useEffect(() => {
     if (user && activeTab === 'dashboard') {
       fetchBalances();
-    }
-    if (user && activeTab === 'scanner' && scannedStocks.length === 0) {
-      runScanner();
     }
   }, [user, activeTab]);
 
@@ -152,22 +208,22 @@ function App() {
   return (
     <div className="layout-container">
       <aside className="sidebar">
-        <div className="logo-area" style={{ textAlign: 'center', marginBottom: '1rem' }}>
-          <div className="logo-icon" style={{ width: '40px', height: '40px' }}>
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" style={{ width: '20px' }}>
+        <div className="logo-area" style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '0 0.5rem', marginBottom: '1rem' }}>
+          <div className="logo-icon" style={{ width: '32px', height: '32px', margin: 0, borderRadius: '8px' }}>
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" style={{ width: '18px', height: '18px' }}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
           </div>
-          <h2 style={{ fontSize: '1.2rem', margin: '0.5rem 0' }}>3Percent</h2>
+          <h2 style={{ fontSize: '1.1rem', fontWeight: 800, margin: 0, letterSpacing: '-0.02em' }}>3Percent</h2>
         </div>
 
         <nav className="nav-menu">
           <button className={`nav-item ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>
-            <svg className="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>
+            <svg className="nav-icon" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>
             대시보드
           </button>
           <button className={`nav-item ${activeTab === 'scanner' ? 'active' : ''}`} onClick={() => setActiveTab('scanner')}>
-            <svg className="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+            <svg className="nav-icon" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
             강력종목 발굴
           </button>
         </nav>
@@ -241,8 +297,14 @@ function App() {
             </header>
 
             {scanLoading && (
-              <div className="scan-progress">
-                <div className="scan-bar" style={{ width: '60%' }}></div>
+              <div style={{ marginBottom: '2rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.9rem' }}>
+                  <span>{scanStatus}</span>
+                  <span>{Math.round(scanProgress)}%</span>
+                </div>
+                <div className="scan-progress">
+                  <div className="scan-bar" style={{ width: `${scanProgress}%` }}></div>
+                </div>
               </div>
             )}
 
@@ -256,7 +318,7 @@ function App() {
                   <div className="stock-info">
                     <div className="stock-price">${Number(stock.price).toLocaleString()}</div>
                     <div className={`stock-profit ${Number(stock.rate) >= 0 ? 'profit-plus' : 'profit-minus'}`}>
-                      {Number(stock.rate) > 0 ? '+' : ''}{stock.rate}%
+                      {Number(stock.rate) > 0 && !stock.rate.toString().includes('+') ? '+' : ''}{stock.rate}%
                     </div>
                   </div>
 
